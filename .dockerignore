@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.swp
+*.swo
+*.ipynb
+.env
+.venv
+est/
+.git
+.gitignore
