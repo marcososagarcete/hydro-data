@@ -86,11 +86,11 @@ anos = sorted([int(a) for a in df_fert["Ano"].dropna().unique()])
 # App
 # -------------------------
 app = Dash(__name__)
-app.title = "Importações de Fertilizantes — Municípios do Paraná"
+app.title = "Importa"
 
 app.layout = html.Div(
     [
-        html.H1("Importações de Fertilizantes — Municípios do Paraná (US$ FOB)"),
+        html.H1("Probandoo"),
         html.Div(
             [
                 html.Div(
