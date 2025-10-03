@@ -2,7 +2,7 @@
 """
 Dashboard (Dash + Plotly) — Importações de Fertilizantes por Município (PR)
 
-Entrada esperada (CSV no diretório pai de src): ../importmunicipio.csv
+Entrada esperada: DATA_DIR/importmunicipio.csv (padrão: ../data/importmunicipio.csv)
 Colunas: "Ano";"Mês";"UF do Município";"Município";"Código SH4";
          "Descrição SH4";"Valor US$ FOB"
 
@@ -14,24 +14,22 @@ from pathlib import Path
 import re
 import numpy as np
 import pandas as pd
-from dash import Dash, html, dcc, dash_table, Input, Output, State
+from dash import Dash, html, dcc, dash_table, Input, Output
 import plotly.express as px
 
 # -------------------------
 # Caminhos e utilitários
 # -------------------------
 DATA_DIR = Path(
-        os.environ.get(
-            "DATA_DIR",
-            Path(__file__).resolve().parent.parent / "data"
-            )
-        ).resolve()
+    os.environ.get("DATA_DIR", Path(__file__).resolve().parent.parent / "data")
+).resolve()
 CSV_PATH = DATA_DIR / "importmunicipio.csv"
 
 if not CSV_PATH.exists():
     raise FileNotFoundError(
-            f"Arquivo de dados nao encontrado: {CSV_PATH}\n"
-            f"Dica: defina a variavel de ambiente DATA_DIR ou coloque importmunicipio.csv em {DATA_DIR}")
+        f"Arquivo de dados nao encontrado: {CSV_PATH}\n"
+        f"Dica: defina a variavel de ambiente DATA_DIR ou coloque importmunicipio.csv em {DATA_DIR}"
+    )
 
 def _to_float(x):
     """Converte strings tipo '1.234.567,89' ou '1234567.89' para float."""
@@ -75,6 +73,7 @@ df["Município"] = (
     .str.replace(r"\s*-\s*PR$", "", regex=True)
 )
 
+# Mantemos o filtro “fertilizantes” amplo (SH4 3102 ou 3105 ou descrição contém “adub/fertiliz”)
 fert_mask = (
     df["Código SH4"].isin([3102, 3105])
     | df["Descrição SH4"].str.contains("adub|fertiliz", case=False, na=False)
@@ -139,11 +138,12 @@ app.layout = html.Div(
                 ),
                 html.Div(
                     [
-                        html.Label("Filtro de produto"),
+                        html.Label("Excluir cidade"),
                         dcc.Checklist(
-                            id="apenas_3102",
-                            options=[{"label": "Apenas SH4 3102 (nitrogenados)", "value": "3102"}],
+                            id="ignorar_paranagua",
+                            options=[{"label": "Ignorar Paranaguá", "value": "ignore_paranagua"}],
                             value=[],
+                            inline=True,
                         ),
                     ],
                 ),
@@ -180,16 +180,19 @@ app.layout = html.Div(
     Input("modo", "value"),
     Input("ano", "value"),
     Input("top_n", "value"),
-    Input("apenas_3102", "value"),
+    Input("ignorar_paranagua", "value"),
 )
-def atualizar(modo, ano, top_n, apenas_3102):
-    if "3102" in (apenas_3102 or []):
-        dbase = df_fert.loc[df_fert["Código SH4"] == 3102].copy()
-        subtitulo_prod = " (apenas SH4 3102 — nitrogenados)"
-    else:
-        dbase = df_fert.copy()
-        subtitulo_prod = " (todos os fertilizantes relevantes)"
+def atualizar(modo, ano, top_n, ignorar_paranagua):
+    # Base: todos fertilizantes relevantes
+    dbase = df_fert.copy()
 
+    # Opcional: excluir Paranaguá (considera com e sem acento)
+    if "ignore_paranagua" in (ignorar_paranagua or []):
+        dbase = dbase.loc[
+            ~dbase["Município"].str.lower().isin(["paranaguá", "paranagua"])
+        ].copy()
+
+    # Agregações conforme modo
     if modo == "ano":
         if ano is None or pd.isna(ano):
             ano_sel = anos[-1] if anos else None
@@ -200,15 +203,17 @@ def atualizar(modo, ano, top_n, apenas_3102):
             .groupby("Município", as_index=False, sort=False)["Valor US$ FOB"]
             .sum()
         )
-        titulo = f"Top municípios por importação de fertilizantes — {ano_sel}{subtitulo_prod}"
+        titulo = f"Top municípios por importação de fertilizantes — {ano_sel}"
     else:
         dados = (
             dbase.groupby("Município", as_index=False, sort=False)["Valor US$ FOB"].sum()
         )
-        titulo = f"Top municípios por importação de fertilizantes — todos os anos{subtitulo_prod}"
+        titulo = "Top municípios por importação de fertilizantes — todos os anos"
 
+    # Ordenação + Top N
     dados = dados.sort_values("Valor US$ FOB", ascending=False).head(int(top_n)).copy()
 
+    # Participação dentro do Top N
     total = float(dados["Valor US$ FOB"].sum()) or 1.0
     dados["Participação"] = dados["Valor US$ FOB"] / total
 
@@ -247,7 +252,5 @@ def atualizar(modo, ano, top_n, apenas_3102):
 
 
 if __name__ == "__main__":
-    # Porta alternativa para evitar conflito com outros apps
-    port=int(os.environ.get("PORT",7860))
+    port = int(os.environ.get("PORT", 7860))
     app.run(host="0.0.0.0", port=port, debug=False)
-
