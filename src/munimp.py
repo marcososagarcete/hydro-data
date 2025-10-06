@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard (Dash + Plotly) — Importações de Fertilizantes por Município (PR)
+Dashboard (Dash + Plotly) — Importações por Município (PR)
 
-Entrada esperada: DATA_DIR/importmunicipio.csv (padrão: ../data/importmunicipio.csv)
-Colunas: "Ano";"Mês";"UF do Município";"Município";"Código SH4";
-         "Descrição SH4";"Valor US$ FOB"
+Este app usa o conjunto de dados completo (sem filtrar por SH4) e permite:
+ - Visualizar Top N municípios por US$ FOB (por ano ou em todos os anos);
+ - Excluir opcionalmente o município de Paranaguá do resultado;
+ - Ver a tabela dos dados exibidos no gráfico.
+
+Entrada padrão: DATA_DIR/importmunicipio.csv (padrão: ../data/importmunicipio.csv)
+Fallback local: cpimportmun.csv (se o arquivo padrão não existir)
+Colunas: "Ano";"Mês";"UF do Município";"Município";"Código SH4";"Descrição SH4";"Valor US$ FOB"
 
 Requisitos: dash, pandas, numpy, plotly
     pip install dash pandas numpy plotly
@@ -23,12 +28,20 @@ import plotly.express as px
 DATA_DIR = Path(
     os.environ.get("DATA_DIR", Path(__file__).resolve().parent.parent / "data")
 ).resolve()
+# Caminho padrão esperado pelo projeto
 CSV_PATH = DATA_DIR / "importmunicipio.csv"
+# Fallback local (conforme informado pelo usuário): arquivo na mesma pasta
+FALLBACK_LOCAL = Path(__file__).resolve().parent / "cpimportmun.csv"
 
-if not CSV_PATH.exists():
+if CSV_PATH.exists():
+    CSV_TO_USE = CSV_PATH
+elif FALLBACK_LOCAL.exists():
+    CSV_TO_USE = FALLBACK_LOCAL
+else:
     raise FileNotFoundError(
-        f"Arquivo de dados nao encontrado: {CSV_PATH}\n"
-        f"Dica: defina a variavel de ambiente DATA_DIR ou coloque importmunicipio.csv em {DATA_DIR}"
+        "Arquivo de dados não encontrado. Verifique estes caminhos:"\
+        f"\n - {CSV_PATH}\n - {FALLBACK_LOCAL}\n"\
+        "Dica: defina a variável de ambiente DATA_DIR ou coloque o CSV no caminho indicado."
     )
 
 def _to_float(x):
@@ -57,7 +70,7 @@ def _fmt_usd_br(v):
 # Carga & limpeza
 # -------------------------
 df = pd.read_csv(
-    CSV_PATH,
+    CSV_TO_USE,  # usa o arquivo padrão ou o fallback local
     sep=";",
     encoding="utf-8-sig",
     quotechar='"',
@@ -66,6 +79,7 @@ df = pd.read_csv(
 
 df["Valor US$ FOB"] = df["Valor US$ FOB"].apply(_to_float)
 df["Ano"] = pd.to_numeric(df["Ano"], errors="coerce").astype("Int64")
+# Normaliza o nome do município: remove sufixo "- PR" e espaços extras
 df["Município"] = (
     df["Município"]
     .astype(str)
@@ -73,14 +87,11 @@ df["Município"] = (
     .str.replace(r"\s*-\s*PR$", "", regex=True)
 )
 
-# Mantemos o filtro “fertilizantes” amplo (SH4 3102 ou 3105 ou descrição contém “adub/fertiliz”)
-fert_mask = (
-    df["Código SH4"].isin([3102, 3105])
-    | df["Descrição SH4"].str.contains("adub|fertiliz", case=False, na=False)
-)
-df_fert = df.loc[fert_mask].copy()
+# A pedido do usuário, NÃO filtramos por SH4: usamos todos os registros
+df_base = df.copy()
 
-anos = sorted([int(a) for a in df_fert["Ano"].dropna().unique()])
+# Anos disponíveis no conjunto completo
+anos = sorted([int(a) for a in df_base["Ano"].dropna().unique()])
 
 # -------------------------
 # App
@@ -90,7 +101,7 @@ app.title = "Importa"
 
 app.layout = html.Div(
     [
-        html.H1("Probandoo"),
+        html.H1("Importações Fertilizante — Municípios do Paraná"),
         html.Div(
             [
                 html.Div(
@@ -183,8 +194,8 @@ app.layout = html.Div(
     Input("ignorar_paranagua", "value"),
 )
 def atualizar(modo, ano, top_n, ignorar_paranagua):
-    # Base: todos fertilizantes relevantes
-    dbase = df_fert.copy()
+    # Base: todos os registros (sem filtro por SH4)
+    dbase = df_base.copy()
 
     # Opcional: excluir Paranaguá (considera com e sem acento)
     if "ignore_paranagua" in (ignorar_paranagua or []):
@@ -203,22 +214,26 @@ def atualizar(modo, ano, top_n, ignorar_paranagua):
             .groupby("Município", as_index=False, sort=False)["Valor US$ FOB"]
             .sum()
         )
-        titulo = f"Top municípios por importação de fertilizantes — {ano_sel}"
+        titulo = f"Top municípios por importação — {ano_sel}"
     else:
         dados = (
             dbase.groupby("Município", as_index=False, sort=False)["Valor US$ FOB"].sum()
         )
-        titulo = "Top municípios por importação de fertilizantes — todos os anos"
+        titulo = "Top municípios por importação — todos os anos"
 
-    # Ordenação + Top N
+    # Ordenação + Top N (mantém os N maiores valores)
     dados = dados.sort_values("Valor US$ FOB", ascending=False).head(int(top_n)).copy()
 
     # Participação dentro do Top N
     total = float(dados["Valor US$ FOB"].sum()) or 1.0
     dados["Participação"] = dados["Valor US$ FOB"] / total
 
+    # Importante: gerar um dataframe já na mesma ordem usada pelo gráfico.
+    # Isso evita desalinhamento entre rótulos/valores quando ordenamos para exibição.
+    plot_df = dados.sort_values("Valor US$ FOB", ascending=True).copy()
+
     fig = px.bar(
-        dados.sort_values("Valor US$ FOB", ascending=True),
+        plot_df,
         x="Valor US$ FOB",
         y="Município",
         orientation="h",
@@ -231,8 +246,8 @@ def atualizar(modo, ano, top_n, ignorar_paranagua):
             "US$ FOB: %{x:.0f}<br>"
             "Participação (Top N): %{customdata:.1%}<extra></extra>"
         ),
-        customdata=dados["Participação"].values,
-        text=[_fmt_usd_br(v) for v in dados["Valor US$ FOB"].values],
+        customdata=plot_df["Participação"].values,
+        text=[_fmt_usd_br(v) for v in plot_df["Valor US$ FOB"].values],
         textposition="outside",
         cliponaxis=False,
     )
@@ -247,7 +262,8 @@ def atualizar(modo, ano, top_n, ignorar_paranagua):
         {"name": "US$ FOB", "id": "Valor US$ FOB", "type": "numeric"},
         {"name": "Participação (Top N)", "id": "Participação", "type": "numeric"},
     ]
-    dados_tbl = dados.copy()
+    # Tabela: mantém Top N em ordem decrescente por valor
+    dados_tbl = dados.sort_values("Valor US$ FOB", ascending=False).copy()
     return fig, cols, dados_tbl.to_dict("records")
 
 
