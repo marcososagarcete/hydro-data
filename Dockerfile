@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Copy code and small runtime dataset
 COPY src/ /app/src/
+COPY assets/ /app/assets/
 COPY data/ /app/data/
 
 # App configuration
@@ -24,4 +25,4 @@ ENV PORT=7860
 EXPOSE 7860
 
 WORKDIR /app/src
-CMD ["python", "munimp.py"]
+CMD ["python", "app.py"]
