@@ -1,0 +1,10 @@
+git add src/munimp.py
+
+git commit -m "comentario de que hace el commit"
+
+git push origin main
+
+git push github main
+
+git remote -v
+
